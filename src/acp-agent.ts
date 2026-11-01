@@ -163,6 +163,7 @@ import {
   backgroundBashTaskFromToolResult,
   backgroundedBashToolCallIds,
   clientSupportsAsyncTasks,
+  clientAsyncTaskDetails,
 } from "./async-tasks.js";
 import {
   AUTH_STATUS_PROBE_TIMEOUT_MS,
@@ -3115,6 +3116,7 @@ export class ClaudeAcpAgent {
         steering: {
           supported: true,
         },
+        asyncTaskDetails: { monitors: true, schedules: true, output: true },
       },
     };
   }
@@ -4717,6 +4719,7 @@ export class ClaudeAcpAgent {
       async (notification) => this.client.sessionUpdate(asSdkSessionNotification(notification)),
       {
         notices: supportsNotices,
+        monitors: clientAsyncTaskDetails(this.clientCapabilities).monitors,
         // A task that a subagent tool call started belongs to the child
         // session of that tool call, like the tool call itself.
         routeOf: (toolCallId) =>
