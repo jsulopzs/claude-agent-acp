@@ -716,7 +716,9 @@ export function normalize(
     }
     if (node && typeof node === "object") {
       return Object.fromEntries(
-        Object.entries(node as Record<string, unknown>).map(([k, v]) => [k, visit(v, k)]),
+        Object.entries(node as Record<string, unknown>)
+          .filter(([k]) => !(key === "_meta" && k === "asyncTaskDetails"))
+          .map(([k, v]) => [k, visit(v, k)]),
       );
     }
     return node;

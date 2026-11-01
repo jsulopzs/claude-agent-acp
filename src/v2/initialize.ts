@@ -56,10 +56,9 @@ export function v1InitializeRequest(request: v2.InitializeRequest): InitializeRe
 
 /**
  * The top-level `_meta` keys of the agent's v1 `initialize` response that
- * advertise an extension the v2 surface does not serve yet: `steering`, for
- * `_session/steering`.
+ * advertise extensions the v2 surface does not serve yet.
  */
-const UNSERVED_EXTENSION_KEYS: readonly string[] = ["steering"];
+const UNSERVED_EXTENSION_KEYS: readonly string[] = ["steering", "asyncTaskDetails"];
 
 /**
  * The v2 `initialize` response for the v1 response of the agent.

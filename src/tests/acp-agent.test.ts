@@ -119,6 +119,19 @@ import type {
 } from "@anthropic-ai/sdk/resources/beta.mjs";
 import { validateRecorded } from "./acp-scenarios/schema.js";
 
+it("advertises async task details independently of client opt-ins", async () => {
+  const agent = new ClaudeAcpAgent({ sessionUpdate: async () => {} } as unknown as AcpClient, {
+    log: () => {},
+    error: () => {},
+  });
+  const initialized = await agent.initialize({ protocolVersion: 1, clientCapabilities: {} });
+  expect(initialized._meta?.asyncTaskDetails).toEqual({
+    monitors: true,
+    schedules: true,
+    output: true,
+  });
+});
+
 describe("session schedule updates", () => {
   const schedules: SessionCronSummary[] = [
     {
@@ -3132,7 +3145,7 @@ describe("task notification replay", () => {
    * 1. A replayed transcript has a Monitor tool call that started a background task.
    * 2. The task notification completes it.
    * Expected:
-   * - The task spawn is a monitor with no transcript card and no Stop.
+   * - The task spawn is a monitor with no transcript card and Stop enabled.
    * - The task then reaches the completed state.
    * - The Monitor tool call itself stays in the transcript.
    */
@@ -3151,19 +3164,22 @@ describe("task notification replay", () => {
         ],
       },
     });
-    const updates = await replay([
-      bashLaunch[0],
-      monitorLaunch,
-      bashLaunch[2],
-      notification("completed"),
-    ]);
+    const updates = await replay(
+      [bashLaunch[0], monitorLaunch, bashLaunch[2], notification("completed")],
+      {
+        _meta: {
+          jetbrains: { air: { version: 1, capabilities: ["asyncTasks"] } },
+          asyncTaskDetails: { monitors: true },
+        },
+      },
+    );
 
     const taskUpdates = asyncTaskUpdates(updates);
     expect(taskUpdates[0]).toMatchObject({
       sessionUpdate: "async_task_spawned",
       taskType: "monitor",
       showInTranscript: false,
-      canStop: false,
+      canStop: true,
       toolCallId: "toolu_bash",
     });
     expect(taskUpdates.at(-1)).toMatchObject({
@@ -10009,9 +10025,9 @@ describe("subagent permission attribution (issue #851)", () => {
    * 2. The first task has its tool call id at start, the second only in a later progress.
    * 3. The first task completes; the client asks to stop the second.
    * Expected:
-   * - Both tasks are spawned as monitors with no transcript card and no Stop.
+   * - Both tasks are spawned as monitors with no transcript card and Stop enabled.
    * - The first task reaches the completed state.
-   * - The stop request returns `stopped: false`.
+   * - The stop request calls the SDK and returns `stopped: true`.
    * - Both Monitor tool calls stay in the transcript.
    */
   it("publishes the async task of a Monitor tool call as a monitor and keeps the tool call", async () => {
@@ -10025,7 +10041,10 @@ describe("subagent permission attribution (issue #851)", () => {
     await agent.initialize({
       protocolVersion: 1,
       clientCapabilities: {
-        _meta: { jetbrains: { air: { version: 1, capabilities: ["asyncTasks"] } } },
+        _meta: {
+          jetbrains: { air: { version: 1, capabilities: ["asyncTasks"] } },
+          asyncTaskDetails: { monitors: true },
+        },
       },
     });
     const system = (fields: Record<string, unknown>) => ({
@@ -10127,7 +10146,7 @@ describe("subagent permission attribution (issue #851)", () => {
       ["mon-b", "monitor-b"],
     ]);
     for (const spawn of spawns) {
-      expect(spawn).toMatchObject({ taskType: "monitor", showInTranscript: false, canStop: false });
+      expect(spawn).toMatchObject({ taskType: "monitor", showInTranscript: false, canStop: true });
     }
     expect(
       taskUpdates.some(
@@ -10139,7 +10158,7 @@ describe("subagent permission attribution (issue #851)", () => {
     ).toBe(true);
     await expect(
       agent.stopAsyncTask({ sessionId: "test-session", asyncTaskId: "mon-b" }),
-    ).resolves.toEqual({ stopped: false });
+    ).resolves.toEqual({ stopped: true });
     for (const toolCallId of ["monitor-a", "monitor-b"]) {
       expect(
         updates.some(
@@ -10325,8 +10344,8 @@ describe("subagent permission attribution (issue #851)", () => {
    * 2. The client stops a Bash task and the Monitor task.
    * Expected:
    * - Subagent tasks, including the monitor, go to the subagent session; the root task stays in the root.
-   * - The monitor is spawned with no transcript card and no Stop.
-   * - Only the Bash task is stopped; the Monitor stop returns `stopped: false`.
+   * - The monitor is spawned with no transcript card and Stop enabled.
+   * - Both the Bash task and Monitor can be stopped.
    */
   it("sends the background tasks of a subagent to its session and keeps a root task in the root", async () => {
     const updates: AcpSessionNotification[] = [];
@@ -10340,7 +10359,10 @@ describe("subagent permission attribution (issue #851)", () => {
       protocolVersion: 1,
       clientCapabilities: {
         subagents: {},
-        _meta: { jetbrains: { air: { version: 1, capabilities: ["asyncTasks"] } } },
+        _meta: {
+          jetbrains: { air: { version: 1, capabilities: ["asyncTasks"] } },
+          asyncTaskDetails: { monitors: true },
+        },
       } as ClientCapabilities & { subagents: Record<string, never> },
     });
     const assistant = (parentToolUseId: string | null, content: unknown[]) => ({
@@ -10463,15 +10485,15 @@ describe("subagent permission attribution (issue #851)", () => {
     await expect(
       agent.stopAsyncTask({ sessionId: "test-session", asyncTaskId: "watch-child" }),
     ).resolves.toEqual({ stopped: true });
-    // A Monitor task is published with canStop false, so the stop request is refused.
+    // A negotiated Monitor task uses the same SDK stop control as a shell.
     await expect(
       agent.stopAsyncTask({ sessionId: "test-session", asyncTaskId: "monitor-child" }),
-    ).resolves.toEqual({ stopped: false });
+    ).resolves.toEqual({ stopped: true });
     release();
     await prompt;
 
     expect(query.stopTask).toHaveBeenCalledWith("watch-child");
-    expect(query.stopTask).not.toHaveBeenCalledWith("monitor-child");
+    expect(query.stopTask).toHaveBeenCalledWith("monitor-child");
     const lifecycle = updates.flatMap(({ sessionId, update }) =>
       "asyncTaskId" in update
         ? [[sessionId, update.sessionUpdate, update.asyncTaskId, (update as any).state]]
@@ -10486,6 +10508,7 @@ describe("subagent permission attribution (issue #851)", () => {
       ["agent-1", "async_task_state_update", "shell-child", "completed"],
       ["test-session", "async_task_state_update", "shell-root", "completed"],
       ["agent-1", "async_task_state_update", "watch-child", "stopped"],
+      ["agent-1", "async_task_state_update", "monitor-child", "stopped"],
       ["agent-1", "async_task_state_update", "shell-late", "completed"],
       ["agent-1", "async_task_spawned", "shell-held", undefined],
       ["agent-1", "async_task_state_update", "shell-held", "completed"],
@@ -10497,7 +10520,7 @@ describe("subagent permission attribution (issue #851)", () => {
     expect(monitorSpawn).toMatchObject({
       taskType: "monitor",
       showInTranscript: false,
-      canStop: false,
+      canStop: true,
     });
     // The stop acknowledgement goes to the transcript that holds the task.
     const stopAcknowledgement = updates.find(

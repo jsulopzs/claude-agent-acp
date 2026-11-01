@@ -4590,19 +4590,7 @@ export class ClaudeAcpAgent {
     schedules: SessionCronSummary[],
   ): Promise<void> {
     const session = this.sessions[sessionId];
-    if (
-      !session ||
-      (this.clientCapabilities?._meta as Record<string, unknown> | undefined)?.asyncTaskDetails ==
-        null
-    )
-      return;
-    const requested = (this.clientCapabilities?._meta as Record<string, unknown>).asyncTaskDetails;
-    if (
-      !requested ||
-      typeof requested !== "object" ||
-      (requested as Record<string, unknown>).schedules !== true
-    )
-      return;
+    if (!session || !clientAsyncTaskDetails(this.clientCapabilities).schedules) return;
     const fingerprint = JSON.stringify(schedules);
     if (session.sessionSchedules?.fingerprint === fingerprint) return;
     await this.client.sessionUpdate(
@@ -4622,13 +4610,7 @@ export class ClaudeAcpAgent {
   }
 
   async asyncTaskOutput(params: AsyncTaskStopRequest): Promise<AsyncTaskOutputResponse> {
-    const details = (this.clientCapabilities?._meta as Record<string, unknown> | undefined)
-      ?.asyncTaskDetails;
-    if (
-      !details ||
-      typeof details !== "object" ||
-      (details as Record<string, unknown>).output !== true
-    ) {
+    if (!clientAsyncTaskDetails(this.clientCapabilities).output) {
       throw RequestError.invalidParams(undefined, "async task output was not negotiated");
     }
     const session = this.sessions[params.sessionId];
@@ -9723,6 +9705,7 @@ export class ClaudeAcpAgent {
       sessionId,
       async (notification) => this.client.sessionUpdate(asSdkSessionNotification(notification)),
       {
+        monitors: clientAsyncTaskDetails(this.clientCapabilities).monitors,
         routeOf: (toolCallId) => {
           const target = replayToolUses.get(toolCallId)?.sessionId;
           return target && target !== sessionId
@@ -12085,19 +12068,27 @@ export class ClaudeAcpAgent {
       tools,
       hooks: {
         ...userProvidedOptions?.hooks,
-        Stop: [
-          ...(userProvidedOptions?.hooks?.Stop || []),
-          {
-            hooks: [
-              async (input) => {
-                if (input.hook_event_name === "Stop" && !input.agent_id && input.session_crons) {
-                  await this.publishSessionSchedules(sessionId, input.session_crons);
-                }
-                return { continue: true };
-              },
-            ],
-          },
-        ],
+        ...(clientAsyncTaskDetails(this.clientCapabilities).schedules
+          ? {
+              Stop: [
+                ...(userProvidedOptions?.hooks?.Stop || []),
+                {
+                  hooks: [
+                    async (input) => {
+                      if (
+                        input.hook_event_name === "Stop" &&
+                        !input.agent_id &&
+                        input.session_crons
+                      ) {
+                        await this.publishSessionSchedules(sessionId, input.session_crons);
+                      }
+                      return { continue: true };
+                    },
+                  ],
+                },
+              ],
+            }
+          : {}),
         ...(subagentConfigHook
           ? {
               SubagentStart: [
