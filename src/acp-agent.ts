@@ -89,6 +89,7 @@ import {
   SessionMessage,
   SDKUserMessage,
   SDKUserMessageReplay,
+  SessionCronSummary,
   Settings,
   SlashCommand,
   ThinkingConfig,
@@ -1498,6 +1499,8 @@ export type Session = {
   /** Session-owned async task controller. Prompt cancellation intentionally
    *  does not finish it because background work may outlive a prompt. */
   asyncTaskRuntime?: AsyncTaskRuntime;
+  /** Last complete cron list sent to this client. */
+  sessionSchedules?: { schedules: SessionCronSummary[]; fingerprint: string };
   /** The consumer's compaction lifecycle, exposed so the PostCompact hook can
    *  hand it the retained summary. */
   contextCompaction?: ContextCompactionLifecycle;
@@ -3236,6 +3239,7 @@ export class ClaudeAcpAgent {
   async resumeSession(params: ResumeSessionRequest): Promise<ResumeSessionResponse> {
     while (this.providerUpdate) await this.providerUpdate;
     const result = await this.getOrCreateSession(params);
+    await this.repeatSessionSchedules(params.sessionId);
 
     this.afterSetupResponse(params.sessionId, params.mcpServers ?? []);
     return result;
@@ -3254,6 +3258,7 @@ export class ClaudeAcpAgent {
       result = await this.createSessionWhileReplaying(params, timing);
     }
     timing.phase("replay");
+    await this.repeatSessionSchedules(params.sessionId);
 
     // After the replay, so the commands do not interleave with the history.
     this.afterSetupResponse(params.sessionId, params.mcpServers ?? []);
@@ -4575,6 +4580,42 @@ export class ClaudeAcpAgent {
       asyncTasks.releaseStop(params.asyncTaskId);
       throw error;
     }
+  }
+
+  private async publishSessionSchedules(
+    sessionId: string,
+    schedules: SessionCronSummary[],
+  ): Promise<void> {
+    const session = this.sessions[sessionId];
+    if (
+      !session ||
+      (this.clientCapabilities?._meta as Record<string, unknown> | undefined)?.asyncTaskDetails ==
+        null
+    )
+      return;
+    const requested = (this.clientCapabilities?._meta as Record<string, unknown>).asyncTaskDetails;
+    if (
+      !requested ||
+      typeof requested !== "object" ||
+      (requested as Record<string, unknown>).schedules !== true
+    )
+      return;
+    const fingerprint = JSON.stringify(schedules);
+    if (session.sessionSchedules?.fingerprint === fingerprint) return;
+    await this.client.sessionUpdate(
+      asSdkSessionNotification({
+        sessionId,
+        update: { sessionUpdate: "session_schedules_update", schedules },
+      }),
+    );
+    session.sessionSchedules = { schedules, fingerprint };
+  }
+
+  private async repeatSessionSchedules(sessionId: string): Promise<void> {
+    const snapshot = this.sessions[sessionId]?.sessionSchedules;
+    if (!snapshot?.schedules.length) return;
+    this.sessions[sessionId]!.sessionSchedules = undefined;
+    await this.publishSessionSchedules(sessionId, snapshot.schedules);
   }
 
   /** Lazily start the per-session consumer that drains the SDK query stream for
@@ -12013,6 +12054,19 @@ export class ClaudeAcpAgent {
       tools,
       hooks: {
         ...userProvidedOptions?.hooks,
+        Stop: [
+          ...(userProvidedOptions?.hooks?.Stop || []),
+          {
+            hooks: [
+              async (input) => {
+                if (input.hook_event_name === "Stop" && !input.agent_id && input.session_crons) {
+                  await this.publishSessionSchedules(sessionId, input.session_crons);
+                }
+                return { continue: true };
+              },
+            ],
+          },
+        ],
         ...(subagentConfigHook
           ? {
               SubagentStart: [
