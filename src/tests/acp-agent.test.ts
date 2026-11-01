@@ -23,6 +23,7 @@ import {
 } from "@agentclientprotocol/sdk/unstable";
 import type { AcpSessionNotification } from "../acp-subagents.js";
 import type { SessionCronSummary } from "@anthropic-ai/claude-agent-sdk";
+import { AsyncTaskRuntime } from "../async-tasks.js";
 import { NativeSubagentRuntime } from "../native-subagents.js";
 import { nodeToWebWritable, nodeToWebReadable } from "../utils.js";
 import {
@@ -188,6 +189,56 @@ describe("session schedule updates", () => {
       }
     ).publishSessionSchedules("test-session", schedules);
     expect(updates.some((n) => n.update.sessionUpdate === "session_schedules_update")).toBe(false);
+  });
+});
+
+describe("async task output", () => {
+  it("reads a shell task's output tail and rejects unknown or non-shell IDs", async () => {
+    const agent = new ClaudeAcpAgent({ sessionUpdate: async () => {} } as unknown as AcpClient, {
+      log: () => {},
+      error: () => {},
+    });
+    await agent.initialize({
+      protocolVersion: 1,
+      clientCapabilities: { _meta: { asyncTaskDetails: { output: true } } },
+    });
+    const runtime = new AsyncTaskRuntime(true, "test-session", async () => {});
+    await runtime.taskStarted({
+      task_id: "shell",
+      task_type: "local_bash",
+      is_backgrounded: true,
+      tool_use_id: "bash-tool",
+    });
+    await runtime.taskStarted({
+      task_id: "workflow",
+      task_type: "local_workflow",
+      tool_use_id: "workflow-tool",
+    });
+    const request = vi.fn().mockResolvedValue({ response: { output: "a".repeat(9000) } });
+    agent.sessions["test-session"] = mockSessionState({
+      asyncTaskRuntime: runtime,
+      query: { request } as any,
+    });
+    const result = await agent.asyncTaskOutput({ sessionId: "test-session", asyncTaskId: "shell" });
+    expect(Buffer.byteLength(result.output)).toBe(8192);
+    expect(request).toHaveBeenCalledWith({ subtype: "get_task_output", task_id: "shell" });
+    await expect(
+      agent.asyncTaskOutput({ sessionId: "test-session", asyncTaskId: "missing" }),
+    ).rejects.toMatchObject({ code: -32602 });
+    await expect(
+      agent.asyncTaskOutput({ sessionId: "test-session", asyncTaskId: "workflow" }),
+    ).rejects.toMatchObject({ code: -32602 });
+  });
+
+  it("requires the output capability", async () => {
+    const agent = new ClaudeAcpAgent({ sessionUpdate: async () => {} } as unknown as AcpClient, {
+      log: () => {},
+      error: () => {},
+    });
+    await agent.initialize({ protocolVersion: 1, clientCapabilities: {} });
+    await expect(
+      agent.asyncTaskOutput({ sessionId: "missing", asyncTaskId: "shell" }),
+    ).rejects.toMatchObject({ code: -32602 });
   });
 });
 
