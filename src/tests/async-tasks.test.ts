@@ -1381,17 +1381,24 @@ describe("AsyncTaskRuntime", () => {
       expect(runtime.canStop("shell")).toBe(true);
     });
 
-    it("hides monitors when the client did not request them", async () => {
-      const { runtime, published } = monitorRuntime(false);
-      await runtime.taskStarted({
-        task_id: "monitor",
-        task_type: "local_monitor",
-        tool_use_id: "monitor-tool",
-      });
-      await runtime.taskProgress({ task_id: "monitor", summary: "Observed change" });
-      await runtime.backgroundTasksChanged([{ task_id: "monitor", task_type: "local_monitor" }]);
-      expect(published).toEqual([]);
-      expect(runtime.canStop("monitor")).toBe(false);
+    it("keeps legacy monitor announcements without the capability", async () => {
+      for (const taskType of ["local_monitor", "local_bash"] as const) {
+        const { runtime, published } = monitorRuntime(false);
+        await runtime.taskStarted({
+          task_id: "monitor",
+          task_type: taskType,
+          is_backgrounded: true,
+          tool_use_id: "monitor-tool",
+        });
+        expect(published[0]?.update).toMatchObject({
+          ...MONITOR_SPAWN,
+          asyncTaskId: "monitor",
+          toolCallId: "monitor-tool",
+          canStop: false,
+        });
+        expect(runtime.canStop("monitor")).toBe(false);
+        expect(runtime.claimStop("monitor")).toBe(false);
+      }
     });
   });
 });

@@ -964,9 +964,9 @@ Claude can run work in the background, for example a backgrounded Bash command o
 The adapter publishes that work as async tasks when the client declares `asyncTasks`.
 Without the capability, the adapter sends no async task update.
 A subagent task (`local_agent`) is not an async task. Native subagent sessions report it.
-A client that sets `initialize.clientCapabilities._meta.asyncTaskDetails.monitors: true` also receives Monitor tasks as async tasks.
-The adapter reports both `local_monitor` tasks and tasks started by a `Monitor` tool call with `taskType: "monitor"`, `showInTranscript: false`, and `canStop: true`.
-The `Monitor` tool call stays in the transcript; clients without this capability receive no monitor task updates.
+The adapter reports both `local_monitor` tasks and tasks started by a `Monitor` tool call with `taskType: "monitor"`, `showInTranscript: false`, and `canStop: false` by default.
+A client that sets `initialize.clientCapabilities._meta.asyncTaskDetails.monitors: true` can stop those tasks; their spawn announces `canStop: true`.
+The `Monitor` tool call stays in the transcript.
 A task that a subagent tool call started goes to the subagent session.
 Its spawn, progress and state updates go there also after the subagent finished.
 

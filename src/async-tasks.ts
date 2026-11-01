@@ -172,11 +172,6 @@ export class AsyncTaskRuntime {
       this.ignore(task);
       return;
     }
-    if (field(message, "taskType", "task_type") === "local_monitor" && !this.options.monitors) {
-      this.ignore(task);
-      return;
-    }
-
     const previousOutputFilePath = task.outputFilePath;
     const previousToolCallId = task.toolCallId;
     const wasAnnounced = task.announced;
@@ -207,11 +202,6 @@ export class AsyncTaskRuntime {
       this.ignore(task);
       return;
     }
-    if (field(message, "taskType", "task_type") === "local_monitor" && !this.options.monitors) {
-      this.ignore(task);
-      return;
-    }
-
     const previousOutputFilePath = task.outputFilePath;
     const previousToolCallId = task.toolCallId;
     const wasAnnounced = task.announced;
@@ -376,10 +366,6 @@ export class AsyncTaskRuntime {
       const task = this.task(taskId);
       if (task.ignored || isTerminal(task.state)) continue;
       const levelTaskType = field(item, "taskType", "task_type");
-      if (levelTaskType === "local_monitor" && !this.options.monitors) {
-        this.ignore(task);
-        continue;
-      }
       if (levelTaskType === "local_agent") {
         this.ignore(task);
         continue;
@@ -737,10 +723,6 @@ export class AsyncTaskRuntime {
     }
     if (task.toolCallId && this.options.toolNameOf?.(task.toolCallId) === "Monitor") {
       task.monitor = true;
-    }
-    if (task.monitor && !this.options.monitors) {
-      this.ignore(task);
-      return;
     }
     if (task.monitor) {
       task.taskType = "monitor";
