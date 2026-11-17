@@ -28,7 +28,11 @@ export function serveAcp(
   logger: Logger | undefined,
   options: { protocols: AcpProtocols },
 ): { closed: Promise<void>; dispose(): Promise<void> } {
-  const output = nodeToWebWritable(process.stdout);
+  let disconnect!: () => void;
+  const disconnected = new Promise<void>((resolve) => {
+    disconnect = resolve;
+  });
+  const output = nodeToWebWritable(process.stdout, disconnect);
   const input = nodeToWebReadable(process.stdin);
   // The router opens the connection of the negotiated version only when it
   // reads `initialize`, so a client that leaves before then leaves no agent.
@@ -40,7 +44,7 @@ export function serveAcp(
     v2.ndJsonStream(output, input),
   );
   return {
-    closed,
+    closed: Promise.race([closed, disconnected]),
     dispose: async () => {
       await agent?.dispose();
     },

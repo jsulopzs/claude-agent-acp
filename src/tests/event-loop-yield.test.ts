@@ -247,13 +247,27 @@ describe("nodeToWebWritable", () => {
     expect((received[0] as Buffer).toString()).toBe("hi");
   });
 
+  it("closes the ACP transport on a broken pipe without an uncaught Node error", async () => {
+    const disconnected = vi.fn();
+    const sink = new Writable({
+      write(_chunk, _encoding, callback) {
+        callback(Object.assign(new Error("client disconnected"), { code: "EPIPE" }));
+      },
+    });
+    const writer = nodeToWebWritable(sink, disconnected).getWriter();
+    await expect(writer.write(new Uint8Array([1]))).rejects.toThrow("client disconnected");
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(disconnected).toHaveBeenCalledTimes(1);
+    await expect(writer.write(new Uint8Array([2]))).rejects.toThrow("client disconnected");
+    expect(disconnected).toHaveBeenCalledTimes(1);
+  });
+
   it("rejects the write that fails", async () => {
     const sink = new Writable({
       write(_chunk, _encoding, callback) {
         callback(new Error("EPIPE"));
       },
     });
-    sink.on("error", () => {});
     const writer = nodeToWebWritable(sink).getWriter();
     await expect(writer.write(new Uint8Array([1]))).rejects.toThrow("EPIPE");
   });

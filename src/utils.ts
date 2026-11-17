@@ -45,25 +45,28 @@ export class Pushable<T> implements AsyncIterable<T> {
   }
 }
 
-// Helper to convert Node.js streams to Web Streams. A byte stream gets each
-// chunk without a copy, so the caller must not change a chunk until its write
-// resolves.
-export function nodeToWebWritable(nodeStream: Writable): WritableStream<Uint8Array> {
+// The Node error event is separate from the write callback: handling only the callback leaves a broken pipe as an uncaught exception.
+export function nodeToWebWritable(
+  nodeStream: Writable,
+  onDisconnect?: () => void,
+): WritableStream<Uint8Array> {
+  let disconnected = false;
   return new WritableStream<Uint8Array>({
+    start(controller) {
+      nodeStream.on("error", (error: Error & { code?: string }) => {
+        controller.error(error);
+        if (!disconnected && (error.code === "EPIPE" || error.code === "ERR_STREAM_DESTROYED")) {
+          disconnected = true;
+          onDisconnect?.();
+        }
+      });
+    },
     write(chunk) {
       return new Promise<void>((resolve, reject) => {
-        // A Uint8Array is written as it is: Node wraps it in a Buffer view
-        // without a copy. The ACP encoder hands each message a fresh array,
-        // so nothing changes the bytes while the write is pending. An
-        // object-mode stream would get the array itself, so it keeps
-        // getting a Buffer copy, as before.
         const data = nodeStream.writableObjectMode ? Buffer.from(chunk) : chunk;
         nodeStream.write(data, (err) => {
-          if (err) {
-            reject(err);
-          } else {
-            resolve();
-          }
+          if (err) reject(err);
+          else resolve();
         });
       });
     },
