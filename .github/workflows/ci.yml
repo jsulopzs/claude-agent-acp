@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, datons]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -17,6 +17,7 @@ concurrency:
 jobs:
   build:
     name: Build
+    if: github.ref != 'refs/heads/datons'
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
@@ -44,3 +45,57 @@ jobs:
 
       - name: Run tests
         run: npm run test:run
+
+  datons-release:
+    name: Release the tagged Datons adapter
+    if: github.repository == 'jsulopzs/claude-agent-acp' && github.ref == 'refs/heads/datons'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    concurrency:
+      group: datons-release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Select the immutable version tag
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="v$(node -p "require('./package.json').version")"
+          case "$tag" in
+            v*-datons.*) ;;
+            *) echo 'Expected a Datons version' >&2; exit 1 ;;
+          esac
+          git rev-parse --verify "refs/tags/$tag"
+          git merge-base --is-ancestor "refs/tags/$tag" HEAD
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo 'publish=false' >> "$GITHUB_OUTPUT"
+          else
+            git checkout --detach "refs/tags/$tag"
+            test "v$(node -p "require('./package.json').version")" = "$tag"
+            echo 'publish=true' >> "$GITHUB_OUTPUT"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        if: steps.version.outputs.publish == 'true'
+        with:
+          node-version: "lts/*"
+          cache: "npm"
+      - name: Build and test the tagged adapter
+        if: steps.version.outputs.publish == 'true'
+        run: |
+          npm ci
+          npm run build
+          npm run test:run -- src/tests/event-loop-yield.test.ts
+      - name: Publish the release archive
+        if: steps.version.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          archive="$(npm pack --json | node -e 'let s=""; process.stdin.on("data", c => s += c); process.stdin.on("end", () => console.log(JSON.parse(s)[0].filename))')"
+          gh release create "$RELEASE_TAG" "$archive" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$RELEASE_TAG" --notes 'Datons ACP adapter built and tested from its immutable version tag in CI. Includes the broken-output-pipe disconnection fix.'

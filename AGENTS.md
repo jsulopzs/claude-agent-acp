@@ -36,6 +36,8 @@ patch, and `chore:`/`ci:`/`test:` and friends do not release at all.
 
 ## Releasing
 
+The `datons` branch publishes the Datons fork through the `datons-release` job in `.github/workflows/ci.yml`. Set the package version and push its matching immutable `v<version>-datons.<n>` tag before pushing `datons`; CI checks out that exact tag, builds it, runs the transport regression tests and publishes the release archive consumed by the chezmoi ACP manifest. Existing releases are never overwritten. The following release-please instructions apply to upstream `main`.
+
 Stable releases are fully automated by release-please. There is no manual release
 workflow, and the version is never chosen by hand — it follows from the commit
 history.
